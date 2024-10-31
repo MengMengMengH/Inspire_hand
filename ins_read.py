@@ -1,5 +1,6 @@
 import serial
 import time
+import keyboard
 
 regdict = {
     'ID' : 1000,
@@ -17,6 +18,7 @@ regdict = {
     'actionSeq' : 2320,
     'actionRun' : 2322
 }
+init_pos = [0,0,0,0,100,1000]
 
 def openSerial(port,baudrate):
     ser = serial.Serial()
@@ -72,7 +74,24 @@ def readRegister(ser, id, add, num, mute=False):
         print()
     return val
 
-def read_data(ser,id,_str):
+def write_data_6(ser,id,_str,val):
+    valid_commands = {'angleSet','forceSet','speedSet'}
+
+    if _str in valid_commands:
+        if len(val) != 6 or any(not (0 <= v <= 1000 or v == -1) for v in val):
+            print('val 必须是长度为6的列表，值范围为 0~1000，允许使用 -1 作为占位符')
+            return
+        
+        val_reg = [((v & 0xFF),(v >> 8) & 0xFF) for v in val]
+        val_reg = [byte for pair in val_reg for byte in pair]
+    
+        writeRegister(ser, id, regdict[_str], 12, val_reg)
+
+    else:
+        print('Function call error')
+
+
+def read_data_6(ser,id,_str):
     valid_data = {'angleSet', 'forceSet', 'speedSet', 'angleAct', 'forceAct'}
     valid_codes = {'errCode', 'statusCode', 'temp'}
 
@@ -83,7 +102,7 @@ def read_data(ser,id,_str):
             return
         val_act = [(val[2*i] & 0xFF) + (val[1 + 2*i] << 8) for i in range(6)]
 
-        print(_str + 'value: ',' '.join(map(str,val_act)))
+        print(f"{_str} value: {' '.join(map(str, val_act))}")
 
     elif _str in valid_codes:
         val_act = readRegister(ser,id,regdict[_str],6,True)
@@ -96,10 +115,43 @@ def read_data(ser,id,_str):
     else:
         print('No data type.')
 
+def forceClb(ser,id):
+
+    print("力校准开始，请等待设备完全停止再进行下一步操作")
+
+    writeRegister(ser,id,regdict['forceClb'],1,[1])
+    time.sleep(15)
+    print("力校准结束。")
+
+    return
+
+
 
 if __name__ == '__main__':
     print('打开串口！')
     ser = openSerial('COM4',115200)
+    
+    # forceClb(ser,1)
+    y_pressed = False
+    g_pressed = False
+
     while(True):
-        read_data(ser, 1, 'forceAct')
-        read_data(ser, 1, 'angleAct')
+        if keyboard.is_pressed('y') and not y_pressed:  # 检查是否按下 'y' 键
+            read_data_6(ser, 1, 'forceAct')
+            read_data_6(ser, 1, 'angleAct')
+            y_pressed = True
+        elif not keyboard.is_pressed('y'):
+            y_pressed = False  # 如果 'y' 键没有按下，重置状态标志
+
+        if keyboard.is_pressed('g') and not g_pressed:
+            write_data_6(ser,1,'angleSet',init_pos)
+            # write_data_6(ser,1,'angleSet',[1000,1000,1000,1000,0,1000])
+
+            g_pressed = True
+        elif not keyboard.is_pressed('g'):
+            g_pressed = False
+
+        if keyboard.is_pressed('q'):  # 检查是否按下 'q' 键
+            print('退出程序！')
+            break
+        
