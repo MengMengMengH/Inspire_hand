@@ -18,7 +18,7 @@ regdict = {
     'actionSeq' : 2320,
     'actionRun' : 2322
 }
-init_pos = [0,0,0,0,100,1000]
+init_pos = [1000,1000,1000,1000,100,1000]
 
 def openSerial(port,baudrate):
     ser = serial.Serial()
@@ -129,7 +129,7 @@ def forceClb(ser,id):
 
 if __name__ == '__main__':
     print('打开串口！')
-    ser = openSerial('COM4',115200)
+    ser = openSerial('COM6',115200)
     
     # forceClb(ser,1)
     y_pressed = False
