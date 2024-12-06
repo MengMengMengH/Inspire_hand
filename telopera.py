@@ -4,14 +4,14 @@ import ctypes
 import sys, os
 from pynput.keyboard import Controller,Key,Listener
 from pynput import keyboard
-import keyboard
+
 import numpy as np
 import msvcrt
 
 
 from ins_read import *      # inspire_hand
 
-lib = CDLL("./wiseglove/WISEGLOVEU3D.dll")
+
 joints = {
     "Thu_MCP": 1,
     "Thu_IP": 2,
@@ -34,43 +34,41 @@ joints = {
 }
 #手指各关节标签：拇指MCP(01),IP(02),拇指食指(03),食指MCP-PIP-DIP(04,05,06),食指中指(07),中指MCP-PIP-DIP(08,09,10),
 #               中指环指(11),环指MCP-PIP-DIP(12,13,14),环指小指(15),小指MCP-DIP(16,17),拇指CMC(18)
-global data_disp
-data_disp = ctypes.c_int
+lib = CDLL("./wiseglove/WISEGLOVEU3D.dll")
+
 g_pGlove = ctypes.c_bool
 num_sensor = ctypes.c_int
-
-snfunc = lib.wgGetSn
-snfunc.restype = ctypes.c_bool
-snfunc.argtypes = [ctypes.POINTER(ctypes.c_char)]
-
 
 angle = (c_float*18)()
 sensor = (c_ushort*18)()
 angle_range = (c_float*18)()
 
-data_disp = 1
 timestamp = ctypes.c_uint
 
-
-#g_pGlove=lib.wgInitManu(3,115200)
 
 ################################################ data glove init ################################################
 
 def init_glove():
     lib.wgInit.restype = ctypes.c_bool
     g_pGlove=lib.wgInit(1)  # 0=左手,1=右手,-1=不分左右 
-    if g_pGlove == False:
-        print("No Glove")
+    if not g_pGlove:
+        print("No Glove detected.")
         lib.wgClose()
+        sys.exit(1)
 
-    else:
-        lib.wgGetNumOfSensor.restype = ctypes.c_int
-        num_sensor = lib.wgGetNumOfSensor()
-        print("glove connected")
-        print(f'num_sensor: {num_sensor}')
-        sn_str = b'aaaaaaaaa'
-        snfunc(sn_str)
-        print(f"该手套序列号为：{sn_str.decode('utf-8')}")
+
+    lib.wgGetNumOfSensor.restype = ctypes.c_int
+    num_sensor = lib.wgGetNumOfSensor()
+
+    print("glove connected")
+    print(f'num_sensor: {num_sensor}')
+
+    sn_str = b'aaaaaaaaa'
+    snfunc = lib.wgGetSn
+    snfunc.restype = ctypes.c_bool
+    snfunc.argtypes = [ctypes.POINTER(ctypes.c_char)]
+    snfunc(sn_str)
+    print(f"该手套序列号为：{sn_str.decode('utf-8')}")
     # print(regdict)
 
     #lib.wgSetCalibMode(ctypes.c_int(0))#自动标定
@@ -84,6 +82,7 @@ def init_glove():
     # for key,value in joints.items():
     #         print (f"{key}  ",end="")
     # print('\n')
+    return num_sensor
 
 ################################################ inspire hand init ################################################
 def init_inspire():
@@ -93,6 +92,32 @@ def init_inspire():
     inspire_ready = False
     return ser, inspire_ready
 
+
+
+############################################### mapping data to inspire ###############################################
+def mapping_ang(mcp="Thu_MCP", ip="Thu_IP", co_thu=[0.5, 0.5]):
+    """
+    计算角度。
+
+    参数：
+    - mcp: 拇指 MCP 关节名称，默认 "Thu_MCP"
+    - ip: 拇指 IP 关节名称，默认 "Thu_IP"
+    - co_thu: 权重系数，默认为 [0.5, 0.5]
+
+    返回：
+    - thu_ang: 计算得到的拇指角度
+    """
+    # 获取拇指 MCP 和 IP 的关节角度和角度范围
+    mcp_angle = angle[joints[mcp] - 1]
+    ip_angle = angle[joints[ip]-1]
+    mcp_range = angle_range[joints[mcp] - 1]
+    ip_range = angle_range[joints[ip] - 1]
+
+    # 计算 ang
+    ang = 1000 - (co_thu[0] * mcp_angle / mcp_range + co_thu[1] * ip_angle / ip_range) * 1000
+
+    return ang
+
 ################################################# main loop #################################################
 def teleop(ser, inspire_ready):
     while True:
@@ -100,36 +125,52 @@ def teleop(ser, inspire_ready):
             key=msvcrt.getch()
             #print(type(key))
             keystr=str(key, encoding="utf-8")
+
             if (keystr=='q'):
                     break
-            if (keystr=='r'):
+            elif (keystr=='r'):
                 lib.wgResetCalib()
                 for i in range(18):
                     angle_range[i] = lib.wgGetCalibRange(ctypes.c_int(i))
-            if (keystr=='c'):
+            elif (keystr=='c'):
                 inspire_ready = True
 
         lib.wgGetAngle.restype = ctypes.c_uint
         timestamp = lib.wgGetAngle(angle)
         write_angle = init_pos
 
-        write_angle[0] = int(1000-(angle[joints["Pin_MCP"] - 1]/angle_range[joints["Pin_MCP"] - 1] * 1000))
-        write_angle[1] = int(1000-(angle[joints["Rin_MCP"] - 1]/angle_range[joints["Rin_MCP"] - 1] * 1000))
-        write_angle[2] = int(1000-(angle[joints["Mid_MCP"] - 1]/angle_range[joints["Mid_MCP"] - 1] * 1000))
-        write_angle[3] = int(1000-(angle[joints["Ind_MCP"] - 1]/angle_range[joints["Ind_MCP"] - 1] * 1000))
-        write_angle[4] = int(1000-(angle[joints["Thu_MCP"] - 1]/angle_range[joints["Thu_MCP"] - 1] * 1000))
-        write_angle[5] = int(1000-(angle[joints["Thu_CMC"] - 1]/angle_range[joints["Thu_CMC"] - 1] * 1000))
+        thu_ang = mapping_ang(mcp = "Thu_MCP", ip = "Thu_IP", co_thu = [0.5, 0.5])
+        ind_ang = mapping_ang(mcp = "Ind_MCP", ip = "Ind_PIP", co_thu = [0.5, 0.5])
+        mid_ang = mapping_ang(mcp = "Mid_MCP", ip = "Mid_PIP", co_thu = [0.5, 0.5])
+        rin_ang = mapping_ang(mcp = "Rin_MCP", ip = "Rin_PIP", co_thu = [0.5, 0.5])
+        pin_ang = mapping_ang(mcp = "Pin_MCP", ip = "Pin_DIP", co_thu = [0.5, 0.5])
+        thu_cmc_ang = 1000 - (angle[joints["Thu_CMC"] - 1]/angle_range[joints["Thu_CMC"] - 1] * 1000)
+        # print(f"ind_ang:{ind_ang}")
+
+        if timestamp > 0:
+            write_angle[0] = int(pin_ang)
+            write_angle[1] = int(rin_ang)
+            write_angle[2] = int(mid_ang)
+            write_angle[3] = int(ind_ang)
+            write_angle[4] = int(thu_ang)
+            write_angle[5] = int(thu_cmc_ang)
         print(f"Pin: {write_angle[0]}   Rin: {write_angle[1]}   Mid: {write_angle[2]}   Ind: {write_angle[3]}  Thu: {write_angle[4]}  Thu_CMC: {write_angle[5]}")
 
-        if timestamp > 0 and inspire_ready:
+        if inspire_ready:
             write_data_6(ser,1,'angleSet',write_angle)
 
 
 if __name__ == '__main__':
-    init_glove()
-    ser, inspire_ready = init_inspire()
-    teleop(ser, inspire_ready)
-    lib.wgClose()
-    ser.close()
-    print("程序结束")
-    sys.exit(0)
+
+    try:
+
+        num_sensor = init_glove()
+        ser, inspire_ready = init_inspire()
+        teleop(ser, inspire_ready)
+
+    finally:
+
+        lib.wgClose()
+        ser.close()
+        print("Program ended.")
+        sys.exit(0)
